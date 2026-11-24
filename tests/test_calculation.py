@@ -201,6 +201,12 @@ def test_average_price() -> None:
     assert average_price([0.3, 0.2], [0.0, 0.0]) == pytest.approx(0.25)
     assert average_price([None, 0.2], [1.0, 1.0]) == pytest.approx(0.2)
     assert average_price([None], [1.0]) is None
+    # Without imports in the hour the weights decide: a standing charge booked
+    # as one kWh a month next to 784 kWh of real imports hardly counts.
+    assert average_price([0.23, 14.6], [0.0, 0.0], [784.0, 1.0]) == pytest.approx(
+        0.2481, abs=1e-3
+    )
+    assert average_price([0.23, 14.6], [0.0, 0.0], [0.0, 0.0]) == pytest.approx(7.415)
 
 
 def test_wallbox_saving() -> None:

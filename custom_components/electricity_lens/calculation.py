@@ -168,24 +168,34 @@ def paid_prices(
 
 
 def average_price(
-    prices: Sequence[float | None], energies: Sequence[float]
+    prices: Sequence[float | None],
+    energies: Sequence[float],
+    weights: Sequence[float] | None = None,
 ) -> float | None:
     """Return the price of an hour over several grid connections.
 
     With several tariffs, such as day and night, each counts with the energy
-    imported through it. Without imports, each counts the same.
+    imported through it. Without imports in the hour, each counts with its
+    weight, the energy it imported over the whole period, so that a connection
+    that books a standing charge as one kWh a month hardly counts. Without
+    weights, each counts the same.
     """
     known = [
-        (price, energy)
-        for price, energy in zip(prices, energies, strict=True)
+        (price, energy, weight)
+        for price, energy, weight in zip(
+            prices, energies, weights or [1.0] * len(prices), strict=True
+        )
         if price is not None
     ]
     if not known:
         return None
-    total = sum(energy for _, energy in known)
+    total = sum(energy for _, energy, _ in known)
     if total >= MIN_PRICED_ENERGY:
-        return sum(price * energy for price, energy in known) / total
-    return sum(price for price, _ in known) / len(known)
+        return sum(price * energy for price, energy, _ in known) / total
+    weight_total = sum(weight for _, _, weight in known)
+    if weight_total >= MIN_PRICED_ENERGY:
+        return sum(price * weight for price, _, weight in known) / weight_total
+    return sum(price for price, _, _ in known) / len(known)
 
 
 @dataclass(frozen=True, slots=True)
@@ -216,12 +226,14 @@ def combine_grid_prices(
     imported, as in average_price. The lowest and highest price of an hour
     also hold its mean and paid price.
     """
+    totals = [sum(energy.get(hour, 0.0) for hour in hours) for energy in energies]
 
     def over_grids(per_grid: Sequence[Sequence[float | None]]) -> list[float | None]:
         return [
             average_price(
                 [prices[index] for prices in per_grid],
                 [energy.get(hour, 0.0) for energy in energies],
+                totals,
             )
             for index, hour in enumerate(hours)
         ]
