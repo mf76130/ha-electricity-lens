@@ -23,10 +23,12 @@ from custom_components.electricity_lens.calculation import (
     heating_cost,
     household_hour,
     internal_rate_of_return,
+    monthly_consumption,
     normal_price,
     paid_prices,
     price_level,
     pv_saving,
+    solar_history,
     solar_saving,
     standing_charge_share,
     summarize,
@@ -559,3 +561,106 @@ def test_solar_saving() -> None:
     assert solar_saving(
         alternative_cost=alternative, cost=cost, saving=saving
     ) == pytest.approx(1.0 * (0.30 - 0.08))
+
+
+UTC = ZoneInfo("UTC")
+
+
+def _month(year: int, month: int, days: int) -> list[float]:
+    start = datetime(year, month, 1, tzinfo=UTC).timestamp()
+    return [start + index * HOUR for index in range(days * 24)]
+
+
+def test_monthly_consumption() -> None:
+    """Months with nearly all hours count, a month number is the mean over years."""
+    full = _month(2025, 1, 31)
+    short = _month(2025, 2, 10)
+    imports = {hour: 1.0 for hour in full + short}
+    exports = {hour: 0.25 for hour in full + short}
+    solar = {hour: 0.5 for hour in full + short}
+    battery = {hour: 0.25 for hour in full + short}
+    result = monthly_consumption(
+        full + short,
+        imports=imports,
+        exports=exports,
+        solar=solar,
+        battery=battery,
+        time_zone=UTC,
+    )
+    # 1.0 - 0.25 + 0.5 + 0.25 = 1.5 kWh in each hour; February is too short.
+    assert result == {1: pytest.approx(1.5 * 31 * 24)}
+
+
+def test_solar_history() -> None:
+    """The total is spread over months by feed-in and what the house used."""
+    june = _month(2023, 6, 30)
+    december = _month(2023, 12, 31)
+    hours = june + december
+    # In June the plant fed in 1 kWh in the 8 noon hours of each day; in
+    # December it fed in nothing, and the house imported all it used.
+    exports = {hour: 1.0 if 8 <= (hour % DAY) / HOUR < 16 else 0.0 for hour in june}
+    imports = {hour: 0.25 for hour in june} | {hour: 0.5 for hour in december}
+    reference = {6: 600.0, 12: 400.0}
+    result = solar_history(
+        hours,
+        imports=imports,
+        exports=exports,
+        solar={},
+        reference=reference,
+        total=2000.0,
+        time_zone=UTC,
+    )
+    # What was spent is exactly the total.
+    assert sum(result.values()) == pytest.approx(2000.0)
+    june_part = sum(result.get(hour, 0.0) for hour in june)
+    december_part = sum(result.get(hour, 0.0) for hour in december)
+    # June: 240 fed in + (600 - 180 imported) used = 660. December: the 400
+    # kWh the house used minus the 372 it imported = 28, so almost nothing.
+    assert june_part == pytest.approx(2000.0 * 660 / 688)
+    assert december_part == pytest.approx(2000.0 * 28 / 688)
+    # June's share lies in the hours that fed in; in December, without feed-in,
+    # every hour gets an equal share.
+    assert result.get(june[0], 0.0) == 0.0
+    assert result[june[12]] > 0
+    assert result[december[0]] == pytest.approx(december_part / len(december))
+
+
+def test_solar_history_edges() -> None:
+    """Without a reference the feed-in sets the shares; without total, nothing."""
+    hours = _month(2023, 6, 30)
+    exports = {hour: 1.0 for hour in hours[:24]}
+    only_feed_in = solar_history(
+        hours,
+        imports={},
+        exports=exports,
+        solar={},
+        reference={},
+        total=100.0,
+        time_zone=UTC,
+    )
+    assert sum(only_feed_in.values()) == pytest.approx(100.0)
+    assert set(only_feed_in) == set(hours[:24])
+    assert (
+        solar_history(
+            hours,
+            imports={},
+            exports=exports,
+            solar={},
+            reference={},
+            total=0.0,
+            time_zone=UTC,
+        )
+        == {}
+    )
+    # Other plants' production in these hours is not part of the total.
+    month = _month(2023, 6, 2)
+    balance = solar_history(
+        month,
+        imports={},
+        exports={hour: 1.0 for hour in month},
+        solar={hour: 0.5 for hour in month},
+        reference={6: 2.0 * 24 * 30},
+        total=10.0,
+        time_zone=UTC,
+    )
+    assert sum(balance.values()) == pytest.approx(10.0)

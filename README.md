@@ -27,11 +27,20 @@ template sensor to write.
 > [!NOTE]
 > This is a fork of
 > [ignazhabibi/ha-electricity-lens](https://github.com/ignazhabibi/ha-electricity-lens).
-> It differs from the original in one way: an hour without grid import, such as
-> one with solar power, is priced from the dashboard's costs per kWh of the
-> hours around it (a day, then three days, then a week) instead of the last
-> price seen. Past periods are computed again with it. Everything else is the
-> original's.
+> It differs from the original in three ways:
+>
+> - An hour without grid import, such as one with solar power, is priced from
+>   the dashboard's costs per kWh of the hours around it (a day, then three
+>   days, then a week) instead of the last price seen.
+> - With several grid connections, an hour without any import takes the mean of
+>   their prices weighted by what each imported over the whole period, so a
+>   connection that books a standing charge as one kWh a month hardly counts.
+> - The PV plant has a history option (Reconfigure, PV plant history): the day
+>   it went into operation and what it produced before the statistics of its
+>   solar meter begin. The months in between are estimated from your feed-in and
+>   imports, scaled to that total, and the saving counts from the first day.
+>
+> Past periods are computed again with it. Everything else is the original's.
 > Its figures are computed from the data in your Home Assistant and can only be
 > as right as that data. They are not financial, tax, or investment advice:
 > check decisions that matter against your bills.

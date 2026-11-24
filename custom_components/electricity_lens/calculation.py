@@ -6,6 +6,7 @@ their own. Energy is in kWh, money in the user's currency.
 
 from __future__ import annotations
 
+import calendar
 from bisect import bisect_right
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -248,6 +249,107 @@ def combine_grid_prices(
         low.append(min([*bounds, *(item[0] for item in known)], default=None))
         high.append(max([*bounds, *(item[1] for item in known)], default=None))
     return GridPrices(mean=mean, paid=paid, low=low, high=high)
+
+
+def _month_hours(
+    hours: Iterable[float], time_zone: tzinfo
+) -> dict[tuple[int, int], list[float]]:
+    """Group hours by local year and month."""
+    months: dict[tuple[int, int], list[float]] = {}
+    for hour in hours:
+        local = datetime.fromtimestamp(hour, time_zone)
+        months.setdefault((local.year, local.month), []).append(hour)
+    return months
+
+
+def _hours_in_month(year: int, month: int) -> int:
+    return calendar.monthrange(year, month)[1] * 24
+
+
+def monthly_consumption(
+    hours: Sequence[float],
+    *,
+    imports: Mapping[float, float],
+    exports: Mapping[float, float],
+    solar: Mapping[float, float],
+    battery: Mapping[float, float],
+    time_zone: tzinfo,
+) -> dict[int, float]:
+    """Return what the household used in a typical month, by month number.
+
+    Only months with data for nearly all their hours count; a month number seen
+    in several years is the mean of them. battery holds what the batteries gave
+    minus what they took. Used to estimate the past without production data.
+    """
+    sums: dict[int, list[float]] = {}
+    for (year, month), month_hours in _month_hours(hours, time_zone).items():
+        if len(month_hours) < 0.9 * _hours_in_month(year, month):
+            continue
+        used = sum(
+            max(
+                imports.get(hour, 0.0)
+                - exports.get(hour, 0.0)
+                + solar.get(hour, 0.0)
+                + battery.get(hour, 0.0),
+                0.0,
+            )
+            for hour in month_hours
+        )
+        sums.setdefault(month, []).append(used)
+    return {month: sum(values) / len(values) for month, values in sums.items()}
+
+
+def solar_history(
+    hours: Sequence[float],
+    *,
+    imports: Mapping[float, float],
+    exports: Mapping[float, float],
+    solar: Mapping[float, float],
+    reference: Mapping[int, float],
+    total: float,
+    time_zone: tzinfo,
+) -> dict[float, float]:
+    """Return an estimate of the production per hour that no statistic holds.
+
+    hours are those before the production statistics begin. total is what the
+    plant produced in them altogether, for example from the meter's reading
+    where its statistics begin. What fell where is estimated: in a month the
+    plant produced what it fed in plus what the house used from it, which is
+    what a typical month of that number used (reference) minus what it
+    imported. The months are scaled to add up to total, and each month's share
+    is spread over its hours as they fed in. Without a reference, the feed-in
+    alone sets the share. solar is what other plants produced in these hours,
+    which is not part of total.
+    """
+    if total <= 0 or not hours:
+        return {}
+    months = _month_hours(hours, time_zone)
+    weights: dict[tuple[int, int], float] = {}
+    for key, month_hours in months.items():
+        year, month = key
+        exported = sum(exports.get(hour, 0.0) for hour in month_hours)
+        if month in reference:
+            share = len(month_hours) / _hours_in_month(year, month)
+            imported = sum(imports.get(hour, 0.0) for hour in month_hours)
+            produced = exported + max(reference[month] * share - imported, 0.0)
+            produced -= sum(solar.get(hour, 0.0) for hour in month_hours)
+            weights[key] = max(produced, 0.0)
+        else:
+            weights[key] = exported
+    weight_sum = sum(weights.values())
+    if weight_sum <= 0:
+        weights = {key: float(len(month_hours)) for key, month_hours in months.items()}
+        weight_sum = sum(weights.values())
+    result: dict[float, float] = {}
+    for key, month_hours in months.items():
+        month_total = total * weights[key] / weight_sum
+        feed = [exports.get(hour, 0.0) for hour in month_hours]
+        feed_sum = sum(feed)
+        for hour, fed in zip(month_hours, feed, strict=True):
+            part = fed / feed_sum if feed_sum > 0 else 1 / len(month_hours)
+            if value := month_total * part:
+                result[hour] = value
+    return result
 
 
 def standing_charge_share(monthly: float, hour: float, time_zone: tzinfo) -> float:

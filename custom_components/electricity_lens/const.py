@@ -29,6 +29,13 @@ CONF_CURRENT: Final = "current"
 """The values in effect now (phase 3)."""
 CONF_RECOMPUTE: Final = "recompute"
 """When the user last asked to compute the category again."""
+CONF_INSTALLED_AT: Final = "installed_at"
+"""The day the PV plant went into operation, as an ISO date."""
+CONF_SOLAR_BEFORE: Final = "solar_before"
+"""What the PV plant produced, in kWh, before its statistics begin."""
+SOLAR_HISTORY_STAT: Final = "electricity_lens:solar_history"
+"""Name of the estimated production before the statistics begin. Not stored:
+it exists only while computing."""
 
 # Config entry options: the household
 CONF_STANDING_CHARGE: Final = "standing_charge"

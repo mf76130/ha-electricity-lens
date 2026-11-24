@@ -508,6 +508,7 @@
           "title": "Was möchtest du ändern?",
           "menu_options": {
             "investment": "Anschaffungskosten",
+            "solar_history": "Vorgeschichte der PV-Anlage",
             "recompute": "Neu berechnen"
           }
         },
@@ -525,6 +526,18 @@
         "recompute": {
           "title": "Neu berechnen",
           "description": "Rechnet die PV-Anlage mit den aktuellen Messdaten neu, zum Beispiel nachdem du einen falschen Messwert in den Statistiken korrigiert hast. Deine Werte bleiben, wie sie sind."
+        },
+        "solar_history": {
+          "title": "Vorgeschichte der PV-Anlage",
+          "description": "Wenn die Statistik Ihres Solar-Zählers später beginnt als die Anlage, tragen Sie ein, ab wann sie in Betrieb war und was sie vor Beginn der Statistik erzeugt hat (zum Beispiel der Zählerstand, bei dem die Statistik beginnt). Electricity Lens schätzt die Monate dazwischen aus Ihrer Einspeisung und Ihrem Netzbezug und zählt die Ersparnis ab dem ersten Tag.",
+          "data": {
+            "installed_at": "In Betrieb seit",
+            "solar_before": "Erzeugung vor der Statistik (kWh)"
+          },
+          "data_description": {
+            "installed_at": "Der Tag der Inbetriebnahme der Anlage.",
+            "solar_before": "Gesamterzeugung in kWh von diesem Tag bis zum Beginn der Statistik des Solar-Zählers. Beides leer lassen, um nur ab der Statistik zu rechnen."
+          }
         }
       },
       "error": {
@@ -532,7 +545,8 @@
         "heating_required": "Wähle die frühere Heizung.",
         "value_required": "Gib einen Wert über 0 an.",
         "scop_range": "Gib einen COP zwischen 1 und 10 an.",
-        "investment_without_comparison": "Ohne Vergleich gibt es keine Ersparnis, die Mehrkosten zurückzahlt. Lass das Feld leer."
+        "investment_without_comparison": "Ohne Vergleich gibt es keine Ersparnis, die Mehrkosten zurückzahlt. Lass das Feld leer.",
+        "solar_history_both": "Beides ausfüllen oder beides leer lassen."
       },
       "abort": {
         "energy_interface": "Das Energie-Dashboard lässt sich nicht lesen. Diese Version von Home Assistant wird noch nicht unterstützt; bitte sieh nach, ob es ein Update von Electricity Lens gibt.",
@@ -540,7 +554,8 @@
         "not_available": "Das Energie-Dashboard liefert die Daten dafür nicht. Die PV-Anlage braucht die PV-Erzeugung, Wärmepumpe und E-Auto brauchen einzelne Geräte.",
         "values_from": "Die neuen Werte gelten ab {time} Uhr.",
         "recomputing": "Wird neu berechnet. Das dauert meist unter einer Minute.",
-        "investment_saved": "Gespeichert. Die Anschaffungskosten gelten sofort."
+        "investment_saved": "Gespeichert. Die Anschaffungskosten gelten sofort.",
+        "solar_history_saved": "Gespeichert. Die Vergangenheit wird neu berechnet, das dauert meist einige Minuten."
       }
     },
     "heat_pump": {

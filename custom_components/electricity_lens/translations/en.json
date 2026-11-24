@@ -508,6 +508,7 @@
           "title": "What do you want to change?",
           "menu_options": {
             "investment": "Purchase cost",
+            "solar_history": "PV plant history",
             "recompute": "Recompute"
           }
         },
@@ -525,6 +526,18 @@
         "recompute": {
           "title": "Recompute",
           "description": "Computes the solar saving again with the current data, for example after you corrected a wrong reading in the statistics. Your values stay as they are."
+        },
+        "solar_history": {
+          "title": "PV plant history",
+          "description": "If the statistics of your solar meter begin later than the plant, enter the day it went into operation and what it produced before its statistics begin (for example the meter's reading where the statistics start). Electricity Lens estimates the months in between from your feed-in and imports and counts the saving from the first day.",
+          "data": {
+            "installed_at": "Operating since",
+            "solar_before": "Production before the statistics (kWh)"
+          },
+          "data_description": {
+            "installed_at": "The day the plant went into operation.",
+            "solar_before": "Total production in kWh from that day until the statistics of the solar meter begin. Leave both empty to count only from the statistics."
+          }
         }
       },
       "error": {
@@ -532,7 +545,8 @@
         "heating_required": "Choose the former heating.",
         "value_required": "Enter a value above 0.",
         "scop_range": "Enter a COP between 1 and 10.",
-        "investment_without_comparison": "Without a comparison there is no saving to pay back an extra cost. Leave it empty."
+        "investment_without_comparison": "Without a comparison there is no saving to pay back an extra cost. Leave it empty.",
+        "solar_history_both": "Enter both, or leave both empty."
       },
       "abort": {
         "energy_interface": "The energy dashboard cannot be read. This version of Home Assistant is not supported yet; please look for an update of Electricity Lens.",
@@ -540,7 +554,8 @@
         "not_available": "The energy dashboard does not provide the data for this. Solar needs solar production, heat pump and electric car need individual devices.",
         "values_from": "The new values apply from {time}.",
         "recomputing": "It is being computed again. This usually takes less than a minute.",
-        "investment_saved": "Saved. The purchase cost applies at once."
+        "investment_saved": "Saved. The purchase cost applies at once.",
+        "solar_history_saved": "Saved. The past is computed again, which usually takes a few minutes."
       }
     },
     "heat_pump": {

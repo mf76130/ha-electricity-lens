@@ -27,6 +27,7 @@ from homeassistant.config_entries import (
 )
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.selector import (
+    DateSelector,  # pyright: ignore[reportUnknownVariableType]
     EntitySelector,  # pyright: ignore[reportUnknownVariableType]
     EntitySelectorConfig,
     NumberSelector,  # pyright: ignore[reportUnknownVariableType]
@@ -54,10 +55,12 @@ from .const import (
     CONF_CURRENT,
     CONF_HEAT_METERS,
     CONF_HEATING,
+    CONF_INSTALLED_AT,
     CONF_INVESTMENT,
     CONF_METERS,
     CONF_RECOMPUTE,
     CONF_SETUP_AT,
+    CONF_SOLAR_BEFORE,
     CONF_STANDING_CHARGE,
     DOMAIN,
     FUELS,
@@ -203,6 +206,16 @@ def investment_schema(hass: HomeAssistant, setup: EnergySetup) -> probatio.Schem
             hass.config.currency, step=1
         )
     return probatio.Schema(fields)
+
+
+def solar_history_schema() -> probatio.Schema:
+    """Return the form of the PV plant's start and its earlier production."""
+    return probatio.Schema(
+        {
+            probatio.Optional(CONF_INSTALLED_AT): DateSelector(),
+            probatio.Optional(CONF_SOLAR_BEFORE): _number("kWh", step=1),
+        }
+    )
 
 
 def alternative(category: str, data: Mapping[str, Any]) -> str:
@@ -825,7 +838,7 @@ class CategorySubentryFlow(ConfigSubentryFlow):
         if (abort := await self._async_load_setup()) is not None:
             return abort
         options = (
-            ["investment", "recompute"]
+            ["investment", "solar_history", "recompute"]
             if self._category == CATEGORY_PV
             else ["now", "before", "meters", "recompute"]
         )
@@ -861,6 +874,36 @@ class CategorySubentryFlow(ConfigSubentryFlow):
             data_schema=self.add_suggested_values_to_schema(
                 investment_schema(self.hass, self._setup), subentry.data
             ),
+        )
+
+    async def async_step_solar_history(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """Change when the PV plant started and what it produced before its data."""
+        subentry = self._get_reconfigure_subentry()
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            given = {
+                key: value
+                for key, value in user_input.items()
+                if value not in (None, "", 0)
+            }
+            if len(given) == 1:
+                # One without the other would not say what to estimate.
+                errors["base"] = "solar_history_both"
+            else:
+                data = {
+                    key: value
+                    for key, value in subentry.data.items()
+                    if key not in (CONF_INSTALLED_AT, CONF_SOLAR_BEFORE)
+                }
+                return self._async_save({**data, **given}, "solar_history_saved", {})
+        return self.async_show_form(
+            step_id="solar_history",
+            data_schema=self.add_suggested_values_to_schema(
+                solar_history_schema(), user_input or subentry.data
+            ),
+            errors=errors,
         )
 
     async def async_step_recompute(

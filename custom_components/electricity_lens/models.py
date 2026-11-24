@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, cast
 
+from homeassistant.util import dt as dt_util
+
 from .calculation import Timeline
 from .const import (
     CATEGORY_HEAT_PUMP,
@@ -21,10 +23,12 @@ from .const import (
     CONF_CURRENT,
     CONF_HEAT_METERS,
     CONF_HEATING,
+    CONF_INSTALLED_AT,
     CONF_INVESTMENT,
     CONF_METERS,
     CONF_RECOMPUTE,
     CONF_SETUP_AT,
+    CONF_SOLAR_BEFORE,
     CONF_STANDING_CHARGE,
     HEATING_GAS,
     HEATING_NONE,
@@ -77,6 +81,10 @@ class CategoryConfig:
     current: Mapping[str, float] = field(default_factory=dict[str, float])
     price_entity: str | None = None
     recompute: float | None = None
+    installed_at: float | None = None
+    """Start of the day the PV plant went into operation."""
+    solar_before: float | None = None
+    """What it produced before its statistics begin, in kWh."""
 
     @classmethod
     def from_data(cls, category: str, data: Mapping[str, Any]) -> CategoryConfig:
@@ -85,6 +93,8 @@ class CategoryConfig:
         battery = data.get(CONF_BATTERY_INVESTMENT)
         current: Mapping[str, Any] = data.get(CONF_CURRENT) or {}
         recompute = data.get(CONF_RECOMPUTE)
+        installed = dt_util.parse_date(str(data.get(CONF_INSTALLED_AT) or ""))
+        solar_before = data.get(CONF_SOLAR_BEFORE)
         return cls(
             category=category,
             investment=float(investment) if investment is not None else None,
@@ -98,6 +108,14 @@ class CategoryConfig:
             current=_numbers(current),
             price_entity=current.get(VALUE_PRICE_ENTITY) or None,
             recompute=float(recompute) if recompute is not None else None,
+            installed_at=(
+                dt_util.start_of_local_day(installed).timestamp()
+                if installed is not None and solar_before is not None
+                else None
+            ),
+            solar_before=float(solar_before)
+            if installed is not None and solar_before is not None
+            else None,
         )
 
     @property
@@ -147,6 +165,12 @@ class CategoryConfig:
             "setup_at": self.setup_at,
             "before": dict(sorted(self.before.items())),
             "recompute": self.recompute,
+            # Only when set, so that other plants keep their past.
+            **(
+                {"installed_at": self.installed_at, "solar_before": self.solar_before}
+                if self.installed_at is not None
+                else {}
+            ),
         }
         return settings_hash(relevant)
 

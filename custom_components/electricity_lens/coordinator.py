@@ -46,10 +46,12 @@ from .calculation import (
     heat_pump_saving,
     heating_cost,
     household_hour,
+    monthly_consumption,
     normal_price,
     paid_prices,
     price_level,
     pv_saving,
+    solar_history,
     solar_saving,
     standing_charge_share,
     summarize,
@@ -65,6 +67,7 @@ from .const import (
     ISSUE_MISSING_METER,
     ISSUE_MISSING_PRICE_ENTITY,
     ISSUE_NO_GRID_PRICE,
+    SOLAR_HISTORY_STAT,
     VALUE_COMBUSTION_CONSUMPTION,
     VALUE_EV_CONSUMPTION,
     VALUE_PRICE,
@@ -131,6 +134,15 @@ HOUSEHOLD_CALCULATION_VERSION = 8
 CATEGORY_CALCULATION_VERSION = 5
 
 type ElectricityLensConfigEntry = ConfigEntry[ElectricityLensCoordinator]
+
+
+def is_pv_history(config: CategoryConfig) -> bool:
+    """Return whether a PV plant has a start and the production before it."""
+    return (
+        config.category == CATEGORY_PV
+        and config.installed_at is not None
+        and bool(config.solar_before)
+    )
 
 
 def _hours(start: float, end: float) -> list[float]:
@@ -296,6 +308,9 @@ class ElectricityLensCoordinator(DataUpdateCoordinator[PaybackData]):
         self.best_solar_day_full_year = False
         """Whether the solar data covers all of the last twelve months."""
         self._best_solar_day_on: date | None = None
+        self._solar_history: tuple[object, dict[float, float]] | None = None
+        """The estimated production before the statistics begin, with what it
+        was computed from."""
 
     async def async_load(self) -> None:
         """Restore progress and record changed current values."""
@@ -499,8 +514,12 @@ class ElectricityLensCoordinator(DataUpdateCoordinator[PaybackData]):
             state.reset(state.fingerprint)
             state.household = household
         if state.data_start is None:
-            state.data_start = await async_first_hour(
-                self.hass, self._key_stats(config, setup)
+            # A PV plant with a known start counts from its first day: what it
+            # produced before its statistics begin is estimated.
+            state.data_start = (
+                config.installed_at
+                if is_pv_history(config)
+                else await async_first_hour(self.hass, self._key_stats(config, setup))
             )
             if state.data_start is None:
                 self._without_data.add(subentry_id)
@@ -563,6 +582,110 @@ class ElectricityLensCoordinator(DataUpdateCoordinator[PaybackData]):
             }
         return sums, values
 
+    def _history_config(self) -> CategoryConfig | None:
+        """Return the PV plant that has a start and the production before it."""
+        return next(
+            (config for config in self.configs.values() if is_pv_history(config)),
+            None,
+        )
+
+    async def _async_add_solar_history(
+        self,
+        setup: EnergySetup,
+        hours: list[float],
+        changes: dict[str, dict[float, float]],
+    ) -> None:
+        """Add the estimated production before the statistics begin to changes."""
+        history = await self._async_solar_history(setup)
+        if history and (
+            part := {hour: history[hour] for hour in hours if hour in history}
+        ):
+            changes[SOLAR_HISTORY_STAT] = part
+
+    async def _async_solar_history(self, setup: EnergySetup) -> dict[float, float]:
+        """Return the estimated production per hour before the statistics begin.
+
+        The PV plant's own statistics begin later than the plant. Its settings
+        say when it started and what it produced before they begin. The
+        estimate lasts until the statistics of all solar meters have data.
+        """
+        config = self._history_config()
+        if config is None or config.installed_at is None or not config.solar_before:
+            return {}
+        key = (
+            config.installed_at,
+            config.solar_before,
+            tuple(sorted(setup.solar)),
+            tuple(
+                sorted(
+                    (grid.import_stat or "", grid.export_stat or "")
+                    for grid in setup.grids
+                )
+            ),
+            tuple(
+                sorted(
+                    (battery.discharge_stat, battery.charge_stat)
+                    for battery in setup.batteries
+                )
+            ),
+        )
+        if self._solar_history is not None and self._solar_history[0] == key:
+            return self._solar_history[1]
+        firsts = [
+            first
+            for stat in setup.solar
+            if (first := await async_first_hour(self.hass, [stat])) is not None
+        ]
+        start = _ceil_hour(config.installed_at)
+        result: dict[float, float] = {}
+        if firsts and start < (gap_end := _ceil_hour(max(firsts))):
+            now = math.floor(time() / HOUR) * HOUR
+            imports = {grid.import_stat for grid in setup.grids if grid.import_stat}
+            exports = {grid.export_stat for grid in setup.grids if grid.export_stat}
+            discharging = {battery.discharge_stat for battery in setup.batteries}
+            charging = {battery.charge_stat for battery in setup.batteries}
+            changes = await async_hourly_changes(
+                self.hass,
+                imports | exports | set(setup.solar) | discharging | charging,
+                start,
+                now,
+            )
+
+            def total(stats: Collection[str]) -> dict[float, float]:
+                sums: dict[float, float] = {}
+                for stat in stats:
+                    for hour, value in changes.get(stat, {}).items():
+                        sums[hour] = sums.get(hour, 0.0) + value
+                return sums
+
+            gave = total(discharging)
+            took = total(charging)
+            battery = {
+                hour: gave.get(hour, 0.0) - took.get(hour, 0.0)
+                for hour in gave.keys() | took.keys()
+            }
+            time_zone = dt_util.get_default_time_zone()
+            solar = total(set(setup.solar))
+            reference = monthly_consumption(
+                _hours(gap_end, now),
+                imports=total(imports),
+                exports=total(exports),
+                solar=solar,
+                battery=battery,
+                time_zone=time_zone,
+            )
+            result = solar_history(
+                _hours(start, gap_end),
+                imports=total(imports),
+                exports=total(exports),
+                solar=solar,
+                reference=reference,
+                total=config.solar_before,
+                time_zone=time_zone,
+            )
+        self._solar_history = (key, result)
+        return result
+
     async def _async_compute(
         self,
         config: CategoryConfig,
@@ -585,6 +708,7 @@ class ElectricityLensCoordinator(DataUpdateCoordinator[PaybackData]):
         changes = _without_resets(
             self.hass, setup, await async_hourly_changes(self.hass, sums, start, end)
         )
+        await self._async_add_solar_history(setup, hours, changes)
         entity_values = await async_hourly_values(self.hass, values, start, end)
         ranges = await async_hourly_ranges(
             self.hass, _price_entities(setup), start, end
@@ -736,7 +860,9 @@ class ElectricityLensCoordinator(DataUpdateCoordinator[PaybackData]):
             if source.export_stat is not None
         }
         for index, hour in enumerate(hours):
-            solar = sum(change(stat, hour) for stat in setup.solar)
+            solar = sum(
+                change(stat, hour) for stat in (*setup.solar, SOLAR_HISTORY_STAT)
+            )
             export = sum(change(stat, hour) for stat in export_prices)
             battery_out = sum(change(b.discharge_stat, hour) for b in setup.batteries)
             battery_in = sum(change(b.charge_stat, hour) for b in setup.batteries)
@@ -897,6 +1023,11 @@ class ElectricityLensCoordinator(DataUpdateCoordinator[PaybackData]):
                 ),
                 "recompute": self.household.recompute,
                 "calculation": HOUSEHOLD_CALCULATION_VERSION,
+                **(
+                    {"solar_history": [config.installed_at, config.solar_before]}
+                    if (config := self._history_config()) is not None
+                    else {}
+                ),
                 "tariffs": sorted(
                     [sorted(config.meters), tariff]
                     for config in self.configs.values()
@@ -1065,6 +1196,7 @@ class ElectricityLensCoordinator(DataUpdateCoordinator[PaybackData]):
         changes = _without_resets(
             self.hass, setup, await async_hourly_changes(self.hass, sums, start, end)
         )
+        await self._async_add_solar_history(setup, hours, changes)
         entity_values = await async_hourly_values(self.hass, values, start, end)
         ranges = await async_hourly_ranges(
             self.hass, _price_entities(setup), start, end
@@ -1120,7 +1252,9 @@ class ElectricityLensCoordinator(DataUpdateCoordinator[PaybackData]):
             figures = household_hour(
                 grid_import=sum(change(stat, hour) for stat in imports),
                 export=sum(exported.values()),
-                solar=sum(change(stat, hour) for stat in setup.solar),
+                solar=sum(
+                    change(stat, hour) for stat in (*setup.solar, SOLAR_HISTORY_STAT)
+                ),
                 battery_out=sum(
                     change(b.discharge_stat, hour) for b in setup.batteries
                 ),
